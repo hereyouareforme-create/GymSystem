@@ -1,0 +1,220 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<title>Alpha Gym Tracker</title>
+<style>
+:root{
+  --blue:#007bff;--blue-dark:#0056b3;
+  --bg:#f6f9fc;--card:#ffffff;--text:#111827;
+  --ok:#16a34a;--warn:#f59e0b;--bad:#d90429;
+  --border:#e5e7eb;--muted:#6b7280;--highlight:#fff3cd;
+}
+@media(prefers-color-scheme:dark){
+  :root{
+    --bg:#0f1115;--card:#171a21;--text:#e5e7eb;
+    --border:#2b3240;--muted:#9ca3af;--highlight:#423e24;
+  }
+}
+*{box-sizing:border-box;}
+body{font-family:Arial,Helvetica,sans-serif;margin:0;background:var(--bg);color:var(--text);padding:20px;}
+header{display:flex;align-items:center;justify-content:center;background:var(--card);padding:10px 16px;border-radius:10px;box-shadow:0 2px 6px rgba(0,0,0,0.1);margin-bottom:12px;}
+h1{color:var(--blue);margin:0;font-size:22px;text-align:center;}
+.badge{background:#e0ebff;color:#003f91;border-radius:999px;padding:3px 8px;font-size:11px;}
+button{background:var(--blue);color:#fff;border:none;border-radius:6px;padding:8px 12px;cursor:pointer;}
+button:hover{background:var(--blue-dark);}button.ghost{background:#e5e7eb;color:#111;}button.ghost:hover{background:#d1d5db;}
+button.danger{background:#dc2626;}button.danger:hover{background:#991b1b;}
+.card{background:var(--card);border-radius:10px;padding:10px 12px;box-shadow:0 1px 5px rgba(0,0,0,.1);margin-bottom:10px;}
+.kpis{display:grid;grid-template-columns:repeat(auto-fit,minmax(140px,1fr));gap:8px;}
+.kpi{text-align:center;padding:8px;border:1px solid var(--border);border-radius:8px;}
+.kpi b{display:block;font-size:18px;margin-top:4px;}
+input,select{padding:8px;border:1px solid var(--border);border-radius:6px;min-width:140px;}
+.toolbar,.controls{display:flex;flex-wrap:wrap;gap:8px;justify-content:center;margin:8px 0;}
+table{width:100%;border-collapse:collapse;background:var(--card);}
+th,td{padding:8px;text-align:center;border-bottom:1px solid var(--border);}
+th{background:var(--blue);color:#fff;position:sticky;top:0;}
+.expired{color:var(--bad);font-weight:bold;}
+.owing{color:var(--warn);font-weight:bold;}
+.active{color:var(--ok);font-weight:bold;}
+.expiringSoon{background:var(--highlight);}
+.muted{color:var(--muted);font-size:13px;text-align:center;}
+</style>
+</head>
+<body>
+
+<header>
+  <h1>Alpha Fitness <span class="badge">v7 Expiry Edition</span></h1>
+</header>
+
+<div class="card">
+  <div class="kpis">
+    <div class="kpi"><div>Members</div><b id="kpiMembers">0</b></div>
+    <div class="kpi"><div>Active</div><b id="kpiActive">0</b></div>
+    <div class="kpi"><div>Owing</div><b id="kpiOwing">0</b></div>
+    <div class="kpi"><div>Expired</div><b id="kpiExpired">0</b></div>
+    <div class="kpi"><div>Today Revenue</div><b id="kpiToday">—</b></div>
+    <div class="kpi"><div>This Month</div><b id="kpiMonth">—</b></div>
+  </div>
+</div>
+
+<div class="card">
+  <h3>📅 Members Expiring Soon (Next 7 Days)</h3>
+  <ul id="expiringList" class="muted">No upcoming expiries.</ul>
+</div>
+
+<div class="card">
+  <div class="toolbar">
+    <input type="text" id="name" placeholder="Member Name">
+    <input type="text" id="phone" placeholder="Phone Number">
+    <select id="plan">
+      <option value="1">Daily (1 day)</option>
+      <option value="30">Monthly (30 days)</option>
+      <option value="90">Quarterly (90 days)</option>
+      <option value="365">Annually (365 days)</option>
+    </select>
+    <input type="number" id="totalFee" placeholder="Total Fee (KES)" min="0">
+    <input type="number" id="amountPaid" placeholder="Amount Paid (KES)" min="0">
+    <select id="method">
+      <option value="Cash">Cash</option>
+      <option value="Mobile">Mobile</option>
+    </select>
+  </div>
+  <div class="controls">
+    <button id="addBtn">Add Member</button>
+    <button id="exportBtn" class="ghost">Export Data</button>
+    <input type="file" id="importFile" style="display:none" accept=".json">
+    <button id="importBtn" class="ghost">Import Data</button>
+    <button id="resetBtn" class="danger">⚠️ Reset All Data</button>
+  </div>
+</div>
+
+<table id="memberTable">
+  <thead>
+    <tr>
+      <th>Name</th><th>Phone</th><th>Plan</th>
+      <th>Start</th><th>Expiry</th>
+      <th>Total Fee</th><th>Paid</th><th>Balance</th><th>Status</th><th>Payment</th><th>Delete</th>
+    </tr>
+  </thead>
+  <tbody></tbody>
+</table>
+
+<script>
+const KEY="alphaGym.members";const REVKEY="alphaGym.revenue";
+let state={members:[]};
+let revenue={today:{date:todayISO(),cash:0,mobile:0},month:{ym:ymKey(new Date()),cash:0,mobile:0}};
+
+function clamp0(n){return Math.max(0,n||0);}
+function toISO(d){const t=new Date(d);t.setHours(0,0,0,0);
+return`${t.getFullYear()}-${String(t.getMonth()+1).padStart(2,"0")}-${String(t.getDate()).padStart(2,"0")}`;}
+function todayISO(){return toISO(new Date());}
+function addDays(i,d){const[a,b,c]=i.split("-").map(Number);return toISO(new Date(a,b-1,c+d));}
+function daysUntil(i){const n=new Date();n.setHours(0,0,0,0);const[a,b,c]=i.split("-").map(Number);
+return Math.ceil((new Date(a,b-1,c)-n)/(86400000));}
+function formatDMY(i){const[a,b,c]=i.split("-");return`${c}/${b}/${a}`;}
+function uid(){return"M"+Date.now().toString(36)+Math.random().toString(36).slice(2,6);}
+function ymKey(d){return`${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,"0")}`;}
+
+(function load(){try{const s=localStorage.getItem(KEY);if(s)state=JSON.parse(s);}catch{}
+try{const r=localStorage.getItem(REVKEY);if(r)revenue=JSON.parse(r);}catch{}
+if(revenue.today.date!==todayISO())revenue.today={date:todayISO(),cash:0,mobile:0};
+if(revenue.month.ym!==ymKey(new Date()))revenue.month={ym:ymKey(new Date()),cash:0,mobile:0};})();
+function save(){localStorage.setItem(KEY,JSON.stringify(state));}
+function saveRev(){localStorage.setItem(REVKEY,JSON.stringify(revenue));}
+
+function recalc(m){m.planDays=(m.plan==="Daily")?1:(m.plan==="Monthly")?30:(m.plan==="Quarterly")?90:365;
+m.expiryISO=addDays(m.startISO,m.planDays);m.totalFee=clamp0(m.totalFee);m.amountPaid=clamp0(m.amountPaid);}
+function statusOf(m){const b=m.totalFee-m.amountPaid;const d=daysUntil(m.expiryISO);
+if(d<0)return{label:"Expired",cls:"expired",bal:b};if(b>0)return{label:"Owing",cls:"owing",bal:b};
+return{label:"Active",cls:"active",bal:b};}
+
+const tbody=document.querySelector("#memberTable tbody");
+const expList=document.getElementById("expiringList");
+const kpiM=document.getElementById("kpiMembers"),kpiA=document.getElementById("kpiActive"),
+kpiO=document.getElementById("kpiOwing"),kpiE=document.getElementById("kpiExpired"),
+kpiT=document.getElementById("kpiToday"),kpiMth=document.getElementById("kpiMonth");
+
+function render(){
+tbody.innerHTML="";expList.innerHTML="";
+let cA=0,cB=0,cC=0,expiring=[];
+
+state.members.forEach(m=>{
+recalc(m);
+const s=statusOf(m);
+if(s.label==="Active")cA++;else if(s.label==="Owing")cB++;else cC++;
+
+const dLeft=daysUntil(m.expiryISO);
+if(dLeft>=0 && dLeft<=7)expiring.push(`${m.name} (${m.phone}) – ${dLeft} day${dLeft!==1?'s':''} left`);
+
+const tr=document.createElement("tr");
+if(dLeft>=0 && dLeft<=7)tr.classList.add("expiringSoon");
+
+["name","phone"].forEach(k=>{const td=document.createElement("td");td.contentEditable=true;td.textContent=m[k];
+td.onblur=()=>{m[k]=td.textContent.trim();save();};tr.append(td);});
+const tdPlan=document.createElement("td");const sel=document.createElement("select");["Daily","Monthly","Quarterly","Annually"].forEach(p=>{
+const o=document.createElement("option");o.value=p;o.textContent=p;if(m.plan===p)o.selected=true;sel.append(o);});
+sel.onchange=()=>{m.plan=sel.value;save();render();};tdPlan.append(sel);tr.append(tdPlan);
+["startISO","expiryISO"].forEach(k=>{const td=document.createElement("td");td.textContent=formatDMY(m[k]);tr.append(td);});
+["totalFee","amountPaid"].forEach(k=>{const td=document.createElement("td");td.contentEditable=true;td.textContent=m[k];
+td.onblur=()=>{m[k]=clamp0(Number(td.textContent.replace(/[^0-9.]/g,"")));save();render();};tr.append(td);});
+const tdBal=document.createElement("td");tdBal.textContent=m.totalFee-m.amountPaid;tr.append(tdBal);
+const tdStat=document.createElement("td");tdStat.textContent=s.label;tdStat.className=s.cls;tr.append(tdStat);
+const tdPay=document.createElement("td");tdPay.textContent=m.method;tr.append(tdPay);
+const tdDel=document.createElement("td");const b=document.createElement("button");b.textContent="🗑";b.className="danger";
+b.onclick=()=>{if(confirm("Delete member?")){state.members=state.members.filter(x=>x!==m);save();render();}};tdDel.append(b);tr.append(tdDel);
+tbody.append(tr);
+});
+
+if(expiring.length>0){expList.innerHTML=expiring.map(e=>`<li>${e}</li>`).join("");}
+else{expList.innerHTML="<li>No upcoming expiries.</li>";}
+
+kpiM.textContent=state.members.length;kpiA.textContent=cA;kpiO.textContent=cB;kpiE.textContent=cC;
+kpiT.textContent=`KES ${revenue.today.cash+revenue.today.mobile}`;kpiMth.textContent=`KES ${revenue.month.cash+revenue.month.mobile}`;
+}
+
+document.getElementById("addBtn").onclick=()=>{const name=document.getElementById("name").value.trim(),
+phone=document.getElementById("phone").value.trim(),
+plan=document.getElementById("plan").selectedOptions[0].text.split(" ")[0],
+total=clamp0(Number(document.getElementById("totalFee").value)),
+paid=clamp0(Number(document.getElementById("amountPaid").value)),
+method=document.getElementById("method").value;
+if(!name||!phone||!total){alert("Please fill all fields.");return;}
+const m={id:uid(),name,phone,plan,startISO:todayISO(),expiryISO:todayISO(),totalFee:total,amountPaid:paid,method};
+state.members.push(m);save();
+if(method==="Mobile"){revenue.today.mobile+=paid;revenue.month.mobile+=paid;}
+else{revenue.today.cash+=paid;revenue.month.cash+=paid;}
+saveRev();render();
+["name","phone","totalFee","amountPaid"].forEach(id=>document.getElementById(id).value="");document.getElementById("plan").value="1";};
+
+document.getElementById("exportBtn").onclick=()=>{
+  const dateStr=todayISO();
+  const blob=new Blob([JSON.stringify(state.members,null,2)],{type:"application/json"});
+  const a=document.createElement("a");
+  a.href=URL.createObjectURL(blob);
+  a.download=`AlphaGymBackup_${dateStr}.json`;
+  a.click();
+};
+
+document.getElementById("importBtn").onclick=()=>document.getElementById("importFile").click();
+document.getElementById("importFile").onchange=e=>{
+  const f=e.target.files[0];if(!f)return;const r=new FileReader();
+  r.onload=x=>{try{state.members=JSON.parse(x.target.result);save();render();alert("Imported successfully.");}catch{alert("Invalid file.");}};
+  r.readAsText(f);
+};
+
+document.getElementById("resetBtn").onclick=()=>{
+  if(confirm("⚠️ Are you sure you want to delete ALL members and revenue? This cannot be undone.")){
+    localStorage.removeItem(KEY);
+    localStorage.removeItem(REVKEY);
+    state={members:[]};
+    revenue={today:{date:todayISO(),cash:0,mobile:0},month:{ym:ymKey(new Date()),cash:0,mobile:0}};
+    render();
+    alert("All data cleared successfully.");
+  }
+};
+
+render();
+</script>
+</body>
+</html>
